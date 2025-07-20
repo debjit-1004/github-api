@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import os
+import asyncio
+import httpx
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -46,6 +49,36 @@ app.include_router(repositories_router)
 app.include_router(search_router)
 app.include_router(trending_router)
 app.include_router(organizations_router)
+
+# Keep-alive service to prevent Render free tier shutdown
+async def keep_alive_ping():
+    """Ping self every 1 minutes to prevent Render free tier shutdown"""
+    while True:
+        try:
+            await asyncio.sleep(60)  # 1 minutes = 60 seconds
+            
+            # Get the service URL from environment or use localhost for local dev
+            service_url = os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:8000')
+            
+            # Ping the health endpoint
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{service_url}/health")
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"🏓 Keep-alive ping at {current_time} - Status: {response.status_code}")
+                
+        except Exception as e:
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"❌ Keep-alive ping failed at {current_time}: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    """Start the keep-alive service on app startup"""
+    # Only run keep-alive if we're on Render (detected by RENDER_EXTERNAL_URL)
+    if os.getenv('RENDER_EXTERNAL_URL'):
+        print("🚀 Starting keep-alive service for Render deployment...")
+        asyncio.create_task(keep_alive_ping())
+    else:
+        print("🏠 Local development mode - keep-alive service disabled")
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
